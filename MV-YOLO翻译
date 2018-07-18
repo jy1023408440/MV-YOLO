@@ -1,0 +1,154 @@
+            通过语义目标检测实现运动矢量跟踪
+摘要：
+目标跟踪是许多视觉领域的基石，虽然现在最近几年在这一领域已经取得了相当大的进展，但在真实视频中如何稳健、高效的进行目标检测依然是一个挑战。在本论文中，我们提出了一个混合跟踪器，他利用被压缩的视频流和在解码帧上通用语义学的目标检测器得到的运动信息，去建立一个快速和高效的跟踪引擎。该方法在OTB跟踪数据集上与几个最近广为人知的跟踪器进行了比较。结果在速度和准确率上本方法都显示了较好的优势。本方法超过其他已存在的跟踪器的另一个优势在于它的简易和部署效率方面，因为它可以在系统中已经存在的资源或信息进行重复利用。
+索引词:
+目标跟踪、语义跟踪、运动矢量 感兴趣区域
+1.介绍
+视觉对象跟踪是计算机视觉领域的基础任务,同时也是许多分析应用例如视频监督、智能家居、独立生活、人机交互等等方面的基石。尽管最近几年在跟踪器性能方面已经有了显著的进步，但在真实世界视频中鲁棒性、高效性和准确性依然是一个挑战
+已存的跟踪处理器可以归为几类，出于本研究的目的，在输入数据域方面的划分是有用的：像素域、压缩域以及混合域。像素域跟踪装置在论文中是最丰富并且最受关注的。许多成功的跟踪方法都是在这个领域发明的。例如：基于相关性过滤（参考论文1）和基于深度学习特征（参考论文2,3）这类方法的优点包括它们对高精度的潜在性和它们是视频编解码器不可知的事实。然而，它们趋向于资源密集型，因为所有的像素值都需要重建、存储在内存并处理。
+第二类跟踪装置是在压缩域数据中开发的，只需要部分解码的视频流信息。压缩域数据携带有价值的信息在很多领域都十分有用，例如:人脸识别、定位、动作语义以及目标分割和跟踪。参考论文6,7,8中主要观点是运动矢量和相关的编码语法元素是场景中物体运动的很好的指示器。既然这些信息已经存在于视频比特流中，那么自然的想去尝试在跟踪过程中使用它。压缩域跟踪器的优势在于高效和速度，因为它们可以避免在许多视频解码、像素值的存储和处理，而且它们一般都在很少的数据中处理。劣势的方面就是它们比较依赖于压缩视频上的编码方法，同时可能会降低准确率，因为它受限于低分辨率的运动采样网格：通常一个MV使用4X4或者更大一点的模块/单元.
+第三种就是混合跟踪器，就是试图同时利用像素域和压缩域数据的优点。参考论文9就是这样一个例子，它通过将从高效视频编码（HEVC）位流中提取的MVs和块编码模式与解码的帧内的颜色信息相结合来执行跟踪。
+本次工作中使用的跟踪方法也是一个混合算法，联合解码MVs和语义对象检测在完全解码的帧上使用。基本思想是，已经存在于压缩视频比特流中的MVS足够好以指示目标对象的近似位置。语义对象检测器然后通过在解码帧上提供像素精度包围盒来细化对象的位置。在另两个最近的工作中，并行跟踪和验证（PTAV）〔10〕和罗洛〔11〕也提倡两阶段跟踪（近似求精）的思想。这两种方法都是像素域跟踪器，而我们的是目前所知的第一个混合式跟踪器。PTAV在第一阶段使用快速但不精确的像素域跟踪器，其次是基于VGGNET（12）的暹罗网络，用于细化第二阶段。在ROLO中，第一阶段近似由YOLO对象检测器[13 ]给出，而第二阶段细化由长短时存储器（LSTM）网络提供。
+论文的结构如下：在第二节中，针对我们的跟踪器我们描述了更多的细节。在第三节中，我们描述了实验，并讨论了结果,同时与其他文献中几个有代表性的跟踪器进行了比较。第四部分总结全文。
+     
+Fig. 1: 概述所提出的跟踪方法
+2.提出的方法
+所提出的跟踪框架在图1中示出。我们把它称为MV-aided YOLO，简称MV-YOLO。根据当前帧间编码帧的MVS和前一帧中的对象位置，构造目标对象的近似位置。构造的近似位置被称为感兴趣区域（ROI）。同时，解码的当前帧被传递到语义对象检测器（在我们的情况下YOLO），它检测帧中的各种对象的位置。ROI然后帮助决定哪些位置对应于目标对象。详情见以下各小节。
+A.ROI 创建
+ROI创建者使用来自HEVC比特流的MVS来构建目标帧在当前帧T中的近似位置，给定对象在前一帧t-1中的位置。程序相对简单。在帧解码期间从HEVC比特流读取帧T的MVS。与PU相关联的MV被分配给其所有像素。然后，在帧t-1中的MV是指对象的位置的每个像素被标记为ROI像素。最后，ROI被选择为包含所有ROI像素的最小轴对齐矩形。该过程在图2中示出，其中帧T中的ROI以红色显示，并且从帧T到帧t-1的多个MV以黄色示出。虽然ROI创建背后的基本思想是相当直观的，但需要解决几个技术难题。这些包括没有MVS的PUs（如跳过和帧内编码PUs），MVs指向除t-1以外的帧和分数精度MVS。在这些挑战中，跳过PUs是最容易解决的。由于跳过模式指示对应的PU与前一帧中的对应的共定位区域几乎完全相同，所以将零MV分配给每个跳过PU。将有意义的运动分配给帧内编码的PU有点牵涉，因为编码器所选择的帧内模式的事实表明，底层运动太复杂，无法利用传统的运动补偿。对于这样的PUs，我们收集在相同的编码树单元（CTU）中的所有相邻的互编码的PU的MVs，然后应用极矢量中值（PVM）（7）来为这样的PUs得出合适的MV。
+
+Fig. 2: An example of ROI creation
+特别地，设 V = (v 1 ,v 2 ,...,v n ) 根据相邻PU相对于水平轴的角度排序的MVS列表
+然后，从V中选择m=b(N1)/2c连续向量的子列表，使它们的角度差之和最小化。也就是说，选定的群是(vk，vk1，.，vkm−1)，其中k 被选择为
+
+然后PVM矢量 v的角度和大小被设置为
+
+
+
+最后，将帧T中指向T以外的帧的MVS缩放（假设运动连续），使得它们的缩放版本指向帧t-1，类似于[7 ]。分数精度MVS的分量被舍入到最近的整数。
+
+
+B.目标检测
+语义对象检测是指在图像中查找对象的位置，并根据它们的类型对它们进行分类，例如人、车、狗、…任何语义对象检测器都可以在我们所提出的图1所示的框架中使用。然而，对于实验，我们选择了三个版本的流行的YOLO检测器：YOLVO3（14），YOLVO2（15）和TiNyYOLO，这是一个更简单和更快（虽然少AcurATE）版本的YOLVO2。要跟踪的对象的初始位置在序列的第一帧中指定。然后我们的跟踪器试图推断对象的类。1这是通过在序列的前五帧上运行对象检测器来完成的。在每一帧中，对象检测器将多个框与每个盒的最高置信度的对象类一起输出。在每一帧中，找到具有指定的对象位置的联合（IOU）具有最大交集的检测框，并记录该框的对象类。这些对象类中最常见的是被跟踪对象的推断类。在推断对象类之后，将时间t的帧馈送到对象检测器中，并给出一组N盒B＝{B 1，…，B n}作为输出。这些框承载对象位置、对象类和可信度得分。从这些n个框中，我们消除了那些类与我们正在跟踪的对象类不匹配的所有对象。通过这种方式，我们最终得到M<=n个方框，我们将在最后的决策阶段使用它们，如下所述注意，所提出的跟踪框架依赖于SE MANICS（即，对象类）来消除帧中的一些不相关的对象/框。原则上，语义信息应该帮助在困难的情况下，例如遮挡或多目标跟踪。然而，即使非语义检测器（那些不输出对象类的）可以在我们的框架中使用，但是精度可能会受到由于不相关的框的大量的影响和在最后阶段做出错误决策的更高的潜力。
+
+C.最终box选择
+
+在目标检测器输出一组框B之后，必须识别对应于目标的框。这是在第一阶段发现的ROI的帮助下完成的。在B的框里，拥有最高IOU的框似乎是一个很好的候选者。然而，即使是最高的IOU也可以很小。因此，我们还将这个最高IOU与自适应阈值进行比较，以得到最终的决定。细节在算法1中给出。
+
+ROI和B框之间的IOU，可以表示为：
+
+算法1中的自适应阈值tIIO相对于先前帧中的目标和ROI之间的IOU改变。该阈值的自适应（算法1中的线10-18）被设计为帮助对象检测器无法检测目标对象的情况，而是检测周围对象。它也有助于在闭塞的情况下。
+
+在这种情况下，由对象检测器产生的方框在IOU（在算法1中的第10行）方面与前一帧中的目标不匹配，因此没有选择它们，而是将前一帧中的目标的位置作为当前帧的最后一个框B（在算法1中的第17行）。但是如果失配继续，IOU接受阈值减小（增加在算法1中的第18行）。最终，较低的IOU接受阈值（算法1中的第10行）将使检测到的框中的一个被接受为最终框B。
+D.总结
+
+现在，我们总结了所提出的跟踪框架的几个关键特征。兼容性与许多对象检测器：我们的跟踪框架的一个优点是，它不是至关重要地依赖于任何特定的对象检测器。当我们在实验中使用YOLO的三个版本用于演示目的时，也可以使用其他检测器， R-CNN [16], Fast R-CNN [17], Faster R-CNN [18], SSD [19],等。
+
+资源共享：我们跟踪框架中的对象检测器也可以用于其他应用程序。例如，如果探测器被放置在云中，其他的云服务可以将其用于其他目的，
+如对象检测表I：实验中使用的序列列表
+
+
+在用户提供的照片。这样，一个单一的深度模型可以为许多应用服务。
+数据重用：在跟踪中，运动通常是征服的关键挑战之一。但是在我们的框架中，运动是通过MVS来处理的，它存在于视频比特流中。对现有数据的重用加快了处理速度，并具有良好的工程意义。
+健壮性：跟踪中的其他关键挑战是出现和改变。许多跟踪器试图对这些模型进行显式建模。我们的框架通过使用基于图像的对象检测器来处理这个问题，该对象不受先前帧中对象的外观的记忆的负担。结果，跟踪器对外观变化非常健壮，如图4（b）中的示例所示。
+
+3.实验结果
+A.实验配置
+在OTB100数据集（20）中100个序列共有30个序列被选择用于测试。这些序列包含YOLO支持的对象类。它们被列在表I中。使用HEVC参考软件HM16.15（21）对测试序列进行编码，其中配置参数在EnCODRYLO LLDLayay-PyMn.CFG（22）和量化参数（QP）设置为32。然后从压缩的HEVC比特流中提取运动矢量。所提出的跟踪框架与DSST〔1〕（VOT 2014挑战的获胜者）、CNN-SVM [2], and Re3 [3]进行了比较。后两者是基于目前主导这一领域的深度神经网络的跟踪器类的代表。在我们的框架中，我们使用了YOLO对象检测器的三个版本：YOLVO3（14），YOLVO2（15）和TinyYOLO（23），TinyYOLO是YOLVO2的简单版本。所得到的跟踪器分别被称为MV-YOLVO3、MV-YOLVO2和MV TiNyYOLO。
+
+B.结果
+为了评估跟踪器，进行一次评估（OPE）〔20〕。图3中示出了成功和精确的图〔20〕。对于每个跟踪器，成功曲线是从预测的目标箱和地面真实箱的IOU导出的，而精度曲线表示预测箱的质心与地面真相之间的平均欧几里德距离小于给定的三个帧的百分比。保持。在成功图中，曲线下方的面积（AUC）在图例中的每个跟踪器旁边的括号中表示。在成功图中，图例中的数字表示预测的框的百分比，其中质心位于地面实心质心的20个像素内。如图3所示，所提出的跟踪框架的精度取决于所采用的目标检测器。YOLVO3导致最佳精度，其次是YOLVO2和TiNyY-OLO。为了进一步说明这一点，表II示出了重叠的成功率（OSR）和距离精度率（DPR）[20 ]，分别在0.2和20的阈值中，对于所提出的跟踪器的三个版本。DPR和OSR都遵循图3中的趋势，表明MV-YOLVO3是三个中最准确的，MV TyyyoLo是最不准确的。然而，速度的结果显示出相反的趋势。表II的最后一行表示三个跟踪器从提议的框架的速度。跟踪器速度计算如下。首先，我们测量了在3.40 GHz、128 GB RAM和12 GB NVIDIA TITAN X GPU上的英特尔CORIE7—68 0K处理器在桌面机上产生的ROI生成速度。在这个测量期间，任何磁盘存取时间
+
+Fig. 3: Success and Precision curves for the tracking methods under study
+
+TABLE II: The performance and speed of the proposed
+tracking framework with three object detectors.
+was the winning  and the ROI is relatively small
+忽略任何磁盘访问时间。然后我们将这个时间添加到官方YOLO网站上报告的对象检测时间[23 ]。这两次求和的倒数给出了表II的最后一行中每秒帧速（FPS）的速度。三个跟踪器中最快的是MV-TiNyYOLO，在88 fps，最慢的是MV-YOLVO3在28 fps，这仍然是相对快的并且接近于CNN-SVM and DSST的精度和成功结果取自各跟踪器的官方网站。对于Re3（3），Re3的作者与我们在OTB100数据集上分享了他们的结果。我们从图3看出，MV-YOLVO3在所有测试跟踪器中具有最好的成功AUC，而CNN-SVM具有最好的精度。在这两种情况下，MV-YOLVO3比Re3更准确，这是令人鼓舞的。反过来，R3比DSST更准确，这是VOT 2014挑战中获胜的跟踪器。这说明了近几年来该领域取得的进展。在速度方面，所有三个版本的MV-YOLO都比CNN-SVM和DSST快，但是速度慢于Re3，根据各自论文中所报道的速度。
+
+
+Fig. 4: 
+当（a）遮挡或（b）尺度变化发生时，所提出的方法的性能。红色框是派生的ROI。
+从MVS（截面Ii-A）和蓝色框是最终预测的目标位置（截面Ii-C）。
+
+
+最后，在图4中示出了MV-YOLVO3性能的一些视觉示例，其中红色框指示从MVS（部分Ii-A）创建的ROI，并且蓝色框显示最终预测框（截面Ii-C）。图中的部分（a）示出闭塞，其中被跟踪的行人被树干遮挡。显著遮挡从帧82开始并持续到帧85。在帧82, 83和84中，没有由对象检测器发现与ROI具有显著重叠的框，因此从帧81选择目标框作为预测的目标位置（算法1中的步骤17），并且降低IOU接受阈值（算法1中的步骤18）。在帧85中，仅检测到人的头部，并且检测到的框和ROI的IOU相对较小。
+
+然而，由于I帧阈值在帧82, 83和84中减少，检测到的框被选择为目标。跟踪器锁定在人身上，并用一个跟踪头部的小框继续几帧。稍后，当人处于全景中并且物体检测器完全检测到它时，跟踪器再次锁定到该人（帧97和稍后）。
+图4的部分（b）示出了所提出的跟踪框架对规模变化的鲁棒性。在框架10中，被跟踪的小车位于车架的左下部分。在接下来的240帧中，汽车向右和朝着摄像机移动，而摄像机本身也向右移动。在车架250上，轿厢比车架10大15倍，其外观发生了变化：车架10主要显示汽车的前视图，车架250开始显示后视图。纵观这些框架，汽车准确地跟踪，尽管这些外观变化。
+
+C.附注
+
+
+
+我们的跟踪框架的性能高度依赖于目标检测器的精度，这又取决于输入图像质量。不幸的是，在OTB100数据集中的视频序列被逐帧地存储为JPEG图像，并且这些JPEG图像的质量不是特别好。在某些情况下，可以容易地看到编码伪像。为了获得我们的测试的运动矢量，我们必须使用HEVC进一步编码和解码，这已经产生了额外的伪影。这导致对象检测器在某些情况下丢失目标对象或错误地分类对象，这对我们的结果产生负面影响。研究中的其他跟踪器没有用HEVC编码帧馈送，因此它们的性能不受额外的HEVC编码的影响。出于这个原因，我们预期，如果测试是在带有注释原始视频的数据集上进行的，那么我们的结果会更好。然而，据我们所知，没有这种类型的公共跟踪数据集。
+
+
+4.结论
+在本文中，我们提出了MV-YOLO，一种新的跟踪框架，结合从压缩视频比特流和语义对象检测的数据重用。基于在视频解码过程中提取的MVS，在当前帧中创建目标对象的ROI。然后，语义对象检测器的输出被用于在ROI的帮助下更精确地定位目标对象。实验表明，MV-YOLO是一种快速、鲁棒的跟踪框架。MV-YOLO的精度和速度取决于所使用的特定目标检测器。然而，即使是最慢的版本，我们测试的速度相当快，在28个FPS，而其准确性与基于深度模型的最近跟踪器相媲美。在本研究中，我们只研究了单目标跟踪。然而，MV-YOLO框架包含支持多个对象跟踪的所有成分。这是未来研究的课题。
+
+
+5.参考文献
+
+[1] M. Danelljan, G. Hger, F. S. Khan, and M. Felsberg, “Discriminative
+scale space tracking,” IEEE Trans. Pattern Anal. Mach. Intell., vol. 39,
+no. 8, pp. 1561–1575, Aug 2017.
+[2] S. Hong, T. You, S. Kwak, and B. Han, “Online tracking by learning
+discriminative saliency map with convolutional neural network,” in Proc.
+ICML’15, 2015, pp. 597–606.
+[3] D. Gordon, A. Farhadi, and D. Fox, “Re3: Real-time recurrent regression
+networks for visual tracking of generic objects,” IEEE Robotics and
+Automation Letters, vol. 3, no. 2, pp. 788–795, April 2018.
+[4] S. R. Alvar, H. Choi, and I. V. Baji´ c, “Can you tell a face from a HEVC
+bitstream?,” in Proc. IEEE International Conference on Multimedia
+Information Processing and Retrieval, 2018, to appear.
+[5] S. R. Alvar, H. Choi, and I. V. Baji´ c, “Can you find a face from a
+HEVC bitstream?,” in Proc. IEEE ICASSP’18, 2018, to appear.
+[6] Y. M. Chen, I. V. Baji´ c, and P. Saeedi, “Moving region segmentation
+from compressed video using global motion estimation and Markov
+random fields,” IEEE Trans. Multimedia, vol. 13, no. 3, pp. 421–431,
+June 2011.
+[7] S. H. Khatoonabadi and I. V. Baji´ c, “Video object tracking in the
+compressed domain using spatio-temporal Markov random fields,” IEEE
+Trans. Image Processing, vol. 22, no. 1, pp. 300–313, Jan. 2013.
+[8] L. Zhao, Z. He, W. Cao, and D. Zhao, “Real-time moving object
+segmentation and classification from HEVC compressed surveillance
+video,” IEEE Trans. Circuits Syst. Video Technol., 2018, to appear.
+[9] S. Gl, J. T. Meyer, C. Hellge, T. Schierl, and W. Samek, “Hybrid
+video object tracking in H.265/HEVC video streams,” in Proc. IEEE
+MMSP’16, Sept 2016, pp. 1–5.
+[10] H. Fan and H. Ling, “Parallel tracking and verifying: A framework for
+real-time and high accuracy visual tracking,” in Proc. IEEE ICCV’17,
+Oct 2017, pp. 5487–5495.
+[11] G. Ning, Z. Zhang, C. Huang, X. Ren, H. Wang, C. Cai, and Z. He,
+“Spatially supervised recurrent convolutional neural networks for visual
+object tracking,” in Proc. ISCAS’17, May 2017, pp. 1–4.
+[12] K. Simonyan and A. Zisserman, “Very deep convolutional networks for
+large-scale image recognition,” arXiv preprint arXiv:1409.1556, 2014.
+[13] J. Redmon, S. Divvala, R. Girshick, and A. Farhadi, “You only look
+once: Unified, real-time object detection,” in Proc. IEEE CVPR’16, Jun.
+2016, pp. 779–788.
+[14] J. Redmon and A. Farhadi, “YOLOv3: An incremental improvement,”
+arXiv preprint arXiv:1804.02767, 2018.
+[15] J. Redmon and A. Farhadi, “YOLO9000: better, faster, stronger,” in
+IEEE CVPR, July 2017, pp. 6517–6525.
+[16] R. Girshick, J. Donahue, T. Darrell, and J. Malik, “Rich feature
+hierarchies for accurate object detection and semantic segmentation,”
+in Proc. IEEE CVPR’14, June 2014, pp. 580–587.
+[17] R. Girshick, “Fast R-CNN,” in Proc. ICCV’15, Dec 2015, pp. 1440–
+1448.
+[18] S. Ren, K. He, R. Girshick, and J. Sun, “Faster R-CNN: Towards real-
+time object detection with region proposal networks,” in Proc. NIPS’15,
+2015, pp. 91–99.
+[19] W. Liu, D. Anguelov, D. Erhan, C. Szegedy, S. Reed, C. Fu, and
+A. C. Berg, “SSD: Single shot multibox detector,” in Proc. European
+conference on computer vision. Springer, 2016, pp. 21–37.
+20] Y. Wu, J. Lim, and M. H. Yang, “Object tracking benchmark,” IEEE
+Trans. Pattern Anal. Mach. Intell., vol. 37, no. 9, pp. 1834–1848, 2015.
+[21] “HEVC reference software (HM 16.15),” https://hevc.hhi.fraunhofer.de/
+trac/hevc/browser/tags/HM-16.15, Accessed: 2017-05-27.
+[22] F. Bossen, “Common HM test conditions and software reference
+configurations,” in ISO/IEC JTC1/SC29 WG11 m28412, JCTVC-L1100,
+Jan. 2013.
+[23] J. Redmon, “YOLO: Real-time object detection,” https://pjreddie.com/
+darknet/yolo/, Accessed: 2018-04-25.
